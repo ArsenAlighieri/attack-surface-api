@@ -1,0 +1,32 @@
+﻿version: "3.8"
+
+services:
+  db:
+    image: mysql:8.0
+    container_name: asm-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: attack-surface
+      MYSQL_USER: asmuser
+      MYSQL_PASSWORD: asmuserpassword
+    ports:
+      - "3306:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+
+  api:
+    build: .
+    container_name: attack-surface-api
+    environment:
+      DB_USER: asmuser
+      DB_PASS: asmuserpassword
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: attack-surface
+    depends_on:
+      - db
+    ports:
+      - "8080:8080"
+
+volumes:
+  db_data:
