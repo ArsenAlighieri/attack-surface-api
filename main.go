@@ -11,7 +11,7 @@ func main() {
 	app := fiber.New()
 
 	database.ConnectDB()
-	api.SetupRoutes(app)
+	api.SetupRoutes(app, database.DB)
 
 	if err := app.Listen(":8080"); err != nil {
 		log.Fatal(err)

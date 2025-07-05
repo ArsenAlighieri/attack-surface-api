@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+
+
 func JWTProtected() fiber.Handler {
 	return func(c *fiber.Ctx) error {
 		authHeader := c.Get("Authorization")

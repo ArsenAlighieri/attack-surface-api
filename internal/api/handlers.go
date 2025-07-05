@@ -1,23 +1,27 @@
 ﻿package api
 
 import (
-	"attack-surface-api/internal/database"
 	"attack-surface-api/internal/models"
 	"attack-surface-api/internal/services"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
+	"os"
 	"time"
 )
 
-var jwtSecret = []byte("supersecretkey") // Daha sonra env dosyasına alacağız
+var jwtSecret = []byte(os.Getenv("JWT_SECRET"))
 
-func GetProfile(c *fiber.Ctx) error {
+type APIHandler struct {
+	DB *gorm.DB
+}
+
+func (h *APIHandler) GetProfile(c *fiber.Ctx) error {
 	userID := c.Locals("user_id").(uint)
 
 	var user models.User
-	result := database.DB.First(&user, userID)
+	result := h.DB.First(&user, userID)
 	if result.Error != nil {
 		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
 			"error": "User not found",
@@ -31,16 +35,16 @@ func GetProfile(c *fiber.Ctx) error {
 	})
 }
 
-func ListSubdomains(c *fiber.Ctx) error {
+func (h *APIHandler) ListSubdomains(c *fiber.Ctx) error {
 	domainID := c.Params("id")
 
 	var subdomains []models.Subdomain
-	database.DB.Where("domain_id = ?", domainID).Find(&subdomains)
+	h.DB.Where("domain_id = ?", domainID).Find(&subdomains)
 
 	return c.JSON(subdomains)
 }
 
-func RegisterUser(c *fiber.Ctx) error {
+func (h *APIHandler) RegisterUser(c *fiber.Ctx) error {
 	type Request struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -65,7 +69,7 @@ func RegisterUser(c *fiber.Ctx) error {
 		Password: string(hashedPassword),
 	}
 
-	result := database.DB.Create(&user)
+	result := h.DB.Create(&user)
 	if result.Error != nil {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 			"error": "Bu e-posta zaten kayıtlı",
@@ -77,9 +81,10 @@ func RegisterUser(c *fiber.Ctx) error {
 	})
 }
 
-func AddDomain(c *fiber.Ctx) error {
+func (h *APIHandler) AddDomain(c *fiber.Ctx) error {
 	type Request struct {
-		Name string `json:"name"`
+		Name      string   `json:"name"`
+		Wordlist  []string `json:"wordlist,omitempty"`
 	}
 
 	var body Request
@@ -89,25 +94,51 @@ func AddDomain(c *fiber.Ctx) error {
 		})
 	}
 
+	userID := c.Locals("user_id").(uint)
+
 	domain := models.Domain{
-		Name: body.Name,
+		Name:   body.Name,
+		UserID: userID,
 	}
 
-	if err := database.DB.Create(&domain).Error; err != nil {
+	if err := h.DB.Create(&domain).Error; err != nil {
 		return c.Status(fiber.StatusConflict).JSON(fiber.Map{
 			"error": "Bu domain zaten mevcut",
 		})
 	}
 
 	// Subdomain taramasını arka planda başlat
-	go services.ScanSubdomains(domain.ID, domain.Name)
+	go services.ScanSubdomains(domain, body.Wordlist)
 
 	return c.JSON(domain)
 }
 
-func ListDomains(c *fiber.Ctx) error {
+func (h *APIHandler) GetDomainStatus(c *fiber.Ctx) error {
+	id := c.Params("id")
+	userID := c.Locals("user_id").(uint)
+
+	var domain models.Domain
+	if err := h.DB.Where("id = ? AND user_id = ?", id, userID).First(&domain).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
+				"error": "Domain not found",
+			})
+		}
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
+			"error": "Database error",
+		})
+	}
+
+	return c.JSON(fiber.Map{
+		"status": domain.Status,
+	})
+}
+
+func (h *APIHandler) ListDomains(c *fiber.Ctx) error {
+	userID := c.Locals("user_id").(uint)
+
 	var domains []models.Domain
-	if err := database.DB.Preload("Subdomains").Find(&domains).Error; err != nil {
+	if err := h.DB.Where("user_id = ?", userID).Preload("Subdomains").Find(&domains).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Domainler alınamadı",
 		})
@@ -116,10 +147,10 @@ func ListDomains(c *fiber.Ctx) error {
 	return c.JSON(domains)
 }
 
-func DeleteDomain(c *fiber.Ctx) error {
+func (h *APIHandler) DeleteDomain(c *fiber.Ctx) error {
 	id := c.Params("id")
 
-	if err := database.DB.Delete(&models.Domain{}, id).Error; err != nil {
+	if err := h.DB.Delete(&models.Domain{}, id).Error; err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"error": "Silme işlemi başarısız",
 		})
@@ -130,7 +161,7 @@ func DeleteDomain(c *fiber.Ctx) error {
 	})
 }
 
-func LoginUser(c *fiber.Ctx) error {
+func (h *APIHandler) LoginUser(c *fiber.Ctx) error {
 	type Request struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -143,7 +174,7 @@ func LoginUser(c *fiber.Ctx) error {
 	}
 
 	var user models.User
-	result := database.DB.Where("email = ?", body.Email).First(&user)
+	result := h.DB.Where("email = ?", body.Email).First(&user)
 	if result.Error == gorm.ErrRecordNotFound {
 		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
 			"error": "Kullanıcı bulunamadı",

@@ -23,6 +23,9 @@ services:
       DB_HOST: db
       DB_PORT: 3306
       DB_NAME: attack-surface
+      JWT_SECRET: "your-super-secret-key"
+      VIRUSTOTAL_API_KEY: "your-virustotal-api-key"
+      SHODAN_API_KEY: "your-shodan-api-key"
     depends_on:
       - db
     ports:
